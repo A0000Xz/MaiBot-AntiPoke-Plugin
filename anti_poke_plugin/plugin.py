@@ -1,12 +1,11 @@
 from src.plugin_system.base.base_plugin import BasePlugin
 from src.plugin_system.apis.plugin_register_api import register_plugin
-from src.plugin_system.base.base_action import BaseAction, ActionActivationType, ChatMode
+from src.plugin_system.base.base_action import BaseAction, ActionActivationType
 from src.plugin_system.base.config_types import ConfigField
 from src.plugin_system.base.component_types import ComponentInfo
 from src.plugin_system.base.base_command import BaseCommand
 from src.plugin_system.apis import generator_api, config_api, database_api
 from src.common.database.database_model import PersonInfo
-from src.person_info.person_info import get_person_info_manager
 from src.common.logger import get_logger
 from typing import Tuple, Optional, Dict, Any, List, Type
 import random
@@ -67,7 +66,7 @@ class AntiPokePlugin(BasePlugin):
     # 配置Schema定义
     config_schema = {
         "plugin": {
-            "config_version": ConfigField(type=str, default="1.3.0", description="插件配置文件版本号"),
+            "config_version": ConfigField(type=str, default="1.4.6", description="插件配置文件版本号"),
             "enabled": ConfigField(type=bool, default=True, description="是否启用插件"),
         },
         "components": {
@@ -109,14 +108,12 @@ class AntiPokePlugin(BasePlugin):
 class AntiPokeAction(BaseAction):
     action_name = "may_poke"
 
-    # 双激活类型配置
-    focus_activation_type = ActionActivationType.ALWAYS
-    normal_activation_type = ActionActivationType.ALWAYS
+    # 一些必要的初始化
+    activation_type = ActionActivationType.ALWAYS
     activation_keywords = ["戳一戳", "戳戳","戳一下","戳我","戳了戳"]
     keyword_case_sensitive = False
 
      # 模式和并行控制
-    mode_enable = ChatMode.ALL
     parallel_action = False
 
     action_description = "根据当前聊天内容戳一戳别人" # action描述
@@ -135,7 +132,7 @@ class AntiPokeAction(BaseAction):
 
     def __init__(self,
     action_data: dict,
-    reasoning: str,
+    action_reasoning: str,
     cycle_timers: dict,
     thinking_id: str,
     global_config: Optional[dict] = None,
@@ -144,7 +141,7 @@ class AntiPokeAction(BaseAction):
         # 显式调用父类初始化
         super().__init__(
         action_data=action_data,
-        reasoning=reasoning,
+        action_reasoning=action_reasoning,
         cycle_timers=cycle_timers,
         thinking_id=thinking_id,
         global_config=global_config,
@@ -277,7 +274,7 @@ class AntiPokeCommand(BaseCommand):
             target_id = self.message.message_info.user_info.user_id
             poked_id = str(self.message.message_info.additional_config.get("target_id"))
             self_id = config_api.get_global_config("bot.qq_account")
-            target_nickname = await get_person_info_manager().get_value(target_id, "person_name")
+            target_nickname = self.message.message_info.user_info.user_nickname
 
             # 检查是否可以反戳（新增逻辑）
             can_poke_back = True
@@ -440,16 +437,14 @@ class AntiPokeCommand(BaseCommand):
 
 
     async def generate_reply(self, content: str, suffix: str, target_nickname):
-        result_status, result_message, _ = await generator_api.generate_reply(
-                action_data = { 
-                "reply_to": f"{target_nickname}：{content}{suffix}(有人戳了戳你，可能是在找你，也可能是在搞怪，你需要对此做出简洁的回应)",
-                },
+        result_status, result_message = await generator_api.generate_reply(
+                reply_reason = f"{target_nickname}：{content}{suffix}(有人戳了戳你，可能是在找你，也可能是在搞怪，你需要对此做出简洁的回应)",
                 chat_stream= self.message.chat_stream
             )
         if result_status:
-            for reply_seg in result_message:
-                data = reply_seg[1]
-                await self.send_type(message_type = "text", content = data, typing = True)
+            for reply_seg in result_message.reply_set.reply_data:
+                data = reply_seg.content
+                await self.send_custom(message_type = "text", content = data, typing = True)
                 await asyncio.sleep(1.0)
 
     def _check_insensitivity_period(self, current_time: float) -> bool:
